@@ -65,10 +65,16 @@ type AgentConfig struct {
 	WatchdogInterval time.Duration // WatchdogInterval is the delay between 2 watchdog checks
 
 	// http/s proxying
-	ProxyURL *url.URL
+	ProxyURL          *url.URL
+	SkipSSLValidation bool
 
 	// filtering
 	Ignore map[string][]string
+
+	// ReplaceTags is used to filter out sensitive information from tag values.
+	// It maps tag keys to a set of replacements.
+	// TODO(x): Introduce into Agent5 ini config. Currently only supported in 6.
+	ReplaceTags []*ReplaceRule
 
 	// transaction analytics
 	AnalyzedRateByService map[string]float64
