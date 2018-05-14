@@ -1,7 +1,7 @@
 // Some benchmarks defined here because it both requires fixtures & model
 // and putting them in model would cause a circular dependency.
 
-package main
+package ddtrace
 
 import (
 	"testing"

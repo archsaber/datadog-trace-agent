@@ -1,4 +1,4 @@
-package main
+package ddtrace
 
 import (
 	"context"
@@ -42,7 +42,7 @@ func handleSignal(onSignal func()) {
 
 // die logs an error message and makes the program exit immediately.
 func die(format string, args ...interface{}) {
-	if opts.info || opts.version {
+	if Opts.info || Opts.Version {
 		// here, we've silenced the logger, and just want plain console output
 		fmt.Printf(format, args...)
 		fmt.Print("")
@@ -53,16 +53,16 @@ func die(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
-// opts are the command-line options
-var opts struct {
-	configFile       string
-	legacyConfigFile string
-	pidfilePath      string
-	logLevel         string
-	version          bool
+// Opts are the command-line options
+var Opts struct {
+	ConfigFile       string
+	LegacyConfigFile string
+	PidfilePath      string
+	LogLevel         string
+	Version          bool
 	info             bool
-	cpuprofile       string
-	memprofile       string
+	Cpuprofile       string
+	Memprofile       string
 }
 
 const agentDisabledMessage = `trace-agent not enabled.
@@ -74,7 +74,7 @@ Exiting.`
 // runAgent is the entrypoint of our code
 func runAgent(ctx context.Context) {
 	// configure a default logger before anything so we can observe initialization
-	if opts.info || opts.version {
+	if Opts.info || Opts.Version {
 		log.UseLogger(log.Disabled)
 	} else {
 		SetupDefaultLogger()
@@ -84,8 +84,8 @@ func runAgent(ctx context.Context) {
 	defer watchdog.LogOnPanic()
 
 	// start CPU profiling
-	if opts.cpuprofile != "" {
-		f, err := os.Create(opts.cpuprofile)
+	if Opts.Cpuprofile != "" {
+		f, err := os.Create(Opts.Cpuprofile)
 		if err != nil {
 			log.Critical(err)
 		}
@@ -94,22 +94,22 @@ func runAgent(ctx context.Context) {
 		defer pprof.StopCPUProfile()
 	}
 
-	if opts.version {
+	if Opts.Version {
 		fmt.Print(info.VersionString())
 		return
 	}
 
-	if !opts.info && opts.pidfilePath != "" {
-		err := pidfile.WritePID(opts.pidfilePath)
+	if !Opts.info && Opts.PidfilePath != "" {
+		err := pidfile.WritePID(Opts.PidfilePath)
 		if err != nil {
 			log.Errorf("Error while writing PID file, exiting: %v", err)
 			os.Exit(1)
 		}
 
-		log.Infof("pid '%d' written to pid file '%s'", os.Getpid(), opts.pidfilePath)
+		log.Infof("pid '%d' written to pid file '%s'", os.Getpid(), Opts.PidfilePath)
 		defer func() {
 			// remove pidfile if set
-			os.Remove(opts.pidfilePath)
+			os.Remove(Opts.PidfilePath)
 		}()
 	}
 
@@ -124,32 +124,32 @@ func runAgent(ctx context.Context) {
 	// deprecated Agent 5 trace-agent.ini config
 	var legacyConf *config.File
 
-	if filepath.Ext(opts.configFile) == ".conf" || filepath.Ext(opts.configFile) == ".ini" {
-		conf, err = config.NewIniIfExists(opts.configFile)
+	if filepath.Ext(Opts.ConfigFile) == ".conf" || filepath.Ext(Opts.ConfigFile) == ".ini" {
+		conf, err = config.NewIniIfExists(Opts.ConfigFile)
 		if err != nil {
 			log.Criticalf("Error reading datadog.conf: %s", err)
 		}
 		if conf != nil {
-			log.Infof("Loading configuration from %s", opts.configFile)
+			log.Infof("Loading configuration from %s", Opts.ConfigFile)
 		}
-	} else if filepath.Ext(opts.configFile) == ".yaml" {
-		yamlConf, err = config.NewYamlIfExists(opts.configFile)
+	} else if filepath.Ext(Opts.ConfigFile) == ".yaml" {
+		yamlConf, err = config.NewYamlIfExists(Opts.ConfigFile)
 		if err != nil {
 			log.Criticalf("Error reading datadog.yaml: %s", err)
 		}
 		if conf != nil {
-			log.Infof("Loading configuration from %s", opts.configFile)
+			log.Infof("Loading configuration from %s", Opts.ConfigFile)
 		}
 	} else {
-		log.Errorf("Configuration file '%s' not supported, it must be a .yaml or .ini file. File ignored.", opts.configFile)
+		log.Errorf("Configuration file '%s' not supported, it must be a .yaml or .ini file. File ignored.", Opts.ConfigFile)
 	}
 
-	legacyConf, err = config.NewIniIfExists(opts.legacyConfigFile)
+	legacyConf, err = config.NewIniIfExists(Opts.LegacyConfigFile)
 	if err != nil {
-		log.Errorf("error reading %s: %s", opts.legacyConfigFile, err)
+		log.Errorf("error reading %s: %s", Opts.LegacyConfigFile, err)
 	}
 	if legacyConf != nil {
-		log.Errorf("using legacy configuration from %s, -ddconfig option is deprecated and will be removed in future versions", opts.legacyConfigFile)
+		log.Errorf("using legacy configuration from %s, -ddconfig option is deprecated and will be removed in future versions", Opts.LegacyConfigFile)
 	}
 
 	agentConf, err = config.NewAgentConfig(conf, legacyConf, yamlConf)
@@ -162,7 +162,7 @@ func runAgent(ctx context.Context) {
 		panic(err)
 	}
 
-	if opts.info {
+	if Opts.info {
 		if err := info.Info(os.Stdout, agentConf); err != nil {
 			os.Stdout.WriteString(fmt.Sprintf("failed to print info: %s\n", err))
 			os.Exit(1)
@@ -212,8 +212,8 @@ func runAgent(ctx context.Context) {
 	agent.Run()
 
 	// collect memory profile
-	if opts.memprofile != "" {
-		f, err := os.Create(opts.memprofile)
+	if Opts.Memprofile != "" {
+		f, err := os.Create(Opts.Memprofile)
 		if err != nil {
 			log.Critical("could not create memory profile: ", err)
 		}

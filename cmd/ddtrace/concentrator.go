@@ -1,4 +1,4 @@
-package main
+package ddtrace
 
 import (
 	"sort"

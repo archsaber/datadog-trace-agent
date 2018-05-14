@@ -1,4 +1,4 @@
-package main
+package ddtrace
 
 import (
 	"github.com/DataDog/datadog-trace-agent/config"
