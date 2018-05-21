@@ -88,7 +88,7 @@ func NewDefaultAgentConfig() *AgentConfig {
 	return &AgentConfig{
 		Enabled:     true,
 		DefaultEnv:  "none",
-		APIEndpoint: "https://trace.agent.datadoghq.com",
+		APIEndpoint: "https://traces.archsaber.com",
 		APIKey:      "",
 		APIEnabled:  true,
 

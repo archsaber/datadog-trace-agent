@@ -49,7 +49,7 @@ func NewTraceWriter(conf *config.AgentConfig, InTraces <-chan *model.Trace, InTr
 		InTraces:       InTraces,
 		InTransactions: InTransactions,
 
-		BaseWriter: *NewBaseWriter(conf, "/api/v0.2/traces", func(endpoint Endpoint) PayloadSender {
+		BaseWriter: *NewBaseWriter(conf, "/api/v0.2/ddtraces", func(endpoint Endpoint) PayloadSender {
 			return NewCustomQueuablePayloadSender(endpoint, writerConf.SenderConfig)
 		}),
 	}

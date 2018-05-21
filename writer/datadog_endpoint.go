@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-const apiHTTPHeaderKey = "DD-Api-Key"
+const APIHTTPHeaderKey = "DD-Api-Key"
 
 // DatadogEndpoint sends payloads to Datadog API.
 type DatadogEndpoint struct {
@@ -42,7 +42,7 @@ func (e *DatadogEndpoint) Write(payload *Payload) error {
 	}
 
 	// Set API key in the header and issue the request
-	req.Header.Set(apiHTTPHeaderKey, e.apiKey)
+	req.Header.Set(APIHTTPHeaderKey, e.apiKey)
 
 	SetExtraHeaders(req.Header, payload.Headers)
 

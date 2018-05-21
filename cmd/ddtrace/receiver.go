@@ -89,24 +89,25 @@ func NewHTTPReceiver(
 
 // Run starts doing the HTTP server and is ready to receive traces
 func (r *HTTPReceiver) Run() {
+	serverMux := http.NewServeMux()
 	// FIXME[1.x]: remove all those legacy endpoints + code that goes with it
-	http.HandleFunc("/spans", r.httpHandleWithVersion(v01, r.handleTraces))
-	http.HandleFunc("/services", r.httpHandleWithVersion(v01, r.handleServices))
-	http.HandleFunc("/v0.1/spans", r.httpHandleWithVersion(v01, r.handleTraces))
-	http.HandleFunc("/v0.1/services", r.httpHandleWithVersion(v01, r.handleServices))
-	http.HandleFunc("/v0.2/traces", r.httpHandleWithVersion(v02, r.handleTraces))
-	http.HandleFunc("/v0.2/services", r.httpHandleWithVersion(v02, r.handleServices))
-	http.HandleFunc("/v0.3/traces", r.httpHandleWithVersion(v03, r.handleTraces))
-	http.HandleFunc("/v0.3/services", r.httpHandleWithVersion(v03, r.handleServices))
+	serverMux.HandleFunc("/spans", r.httpHandleWithVersion(v01, r.handleTraces))
+	serverMux.HandleFunc("/services", r.httpHandleWithVersion(v01, r.handleServices))
+	serverMux.HandleFunc("/v0.1/spans", r.httpHandleWithVersion(v01, r.handleTraces))
+	serverMux.HandleFunc("/v0.1/services", r.httpHandleWithVersion(v01, r.handleServices))
+	serverMux.HandleFunc("/v0.2/traces", r.httpHandleWithVersion(v02, r.handleTraces))
+	serverMux.HandleFunc("/v0.2/services", r.httpHandleWithVersion(v02, r.handleServices))
+	serverMux.HandleFunc("/v0.3/traces", r.httpHandleWithVersion(v03, r.handleTraces))
+	serverMux.HandleFunc("/v0.3/services", r.httpHandleWithVersion(v03, r.handleServices))
 
 	// current collector API
-	http.HandleFunc("/v0.4/traces", r.httpHandleWithVersion(v04, r.handleTraces))
-	http.HandleFunc("/v0.4/services", r.httpHandleWithVersion(v04, r.handleServices))
+	serverMux.HandleFunc("/v0.4/traces", r.httpHandleWithVersion(v04, r.handleTraces))
+	serverMux.HandleFunc("/v0.4/services", r.httpHandleWithVersion(v04, r.handleServices))
 
 	// expvar implicitely publishes "/debug/vars" on the same port
 
 	addr := fmt.Sprintf("%s:%d", r.conf.ReceiverHost, r.conf.ReceiverPort)
-	if err := r.Listen(addr, ""); err != nil {
+	if err := r.Listen(addr, "", serverMux); err != nil {
 		die("%v", err)
 	}
 
@@ -121,7 +122,7 @@ func (r *HTTPReceiver) Run() {
 }
 
 // Listen creates a new HTTP server listening on the provided address.
-func (r *HTTPReceiver) Listen(addr, logExtra string) error {
+func (r *HTTPReceiver) Listen(addr, logExtra string, serverMux *http.ServeMux) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("cannot listen on %s: %v", addr, err)
@@ -138,6 +139,7 @@ func (r *HTTPReceiver) Listen(addr, logExtra string) error {
 	r.server = &http.Server{
 		ReadTimeout:  timeout,
 		WriteTimeout: timeout,
+		Handler:      serverMux,
 	}
 	log.Infof("listening for traces at http://%s%s", addr, logExtra)
 
