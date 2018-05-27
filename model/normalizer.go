@@ -50,7 +50,7 @@ func (s *Span) Normalize() error {
 	}
 	// name shall comply with Datadog metric name normalization
 	var ok bool
-	s.Name, ok = normMetricNameParse(s.Name)
+	s.Name, ok = NormMetricNameParse(s.Name)
 	if !ok {
 		return fmt.Errorf("span.normalize: invalid `Name`: %s", s.Name)
 	}
@@ -174,9 +174,9 @@ func isAlphaNum(b byte) bool {
 	return isAlpha(b) || (b >= '0' && b <= '9')
 }
 
-// normMetricNameParse normalizes metric names with a parser instead of using
+// NormMetricNameParse normalizes metric names with a parser instead of using
 // garbage-creating string replacement routines.
-func normMetricNameParse(name string) (string, bool) {
+func NormMetricNameParse(name string) (string, bool) {
 	if name == "" || len(name) > MaxNameLen {
 		return name, false
 	}
