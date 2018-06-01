@@ -49,11 +49,11 @@ func (s *Span) Normalize() error {
 		return fmt.Errorf("span.normalize: `Name` too long (max %d chars): %s", MaxNameLen, s.Name)
 	}
 	// name shall comply with Datadog metric name normalization
-	var ok bool
-	s.Name, ok = NormMetricNameParse(s.Name)
+	name, ok := NormMetricNameParse(s.Name)
 	if !ok {
 		return fmt.Errorf("span.normalize: invalid `Name`: %s", s.Name)
 	}
+	s.Name = name
 
 	// Resource
 	if s.Resource == "" {
