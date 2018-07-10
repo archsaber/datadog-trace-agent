@@ -19,6 +19,7 @@ import (
 	"github.com/DataDog/datadog-trace-agent/config"
 	"github.com/DataDog/datadog-trace-agent/info"
 	"github.com/DataDog/datadog-trace-agent/model"
+	"github.com/DataDog/datadog-trace-agent/osutil"
 	"github.com/DataDog/datadog-trace-agent/sampler"
 	"github.com/DataDog/datadog-trace-agent/statsd"
 	"github.com/DataDog/datadog-trace-agent/watchdog"
@@ -105,15 +106,12 @@ func (r *HTTPReceiver) Run() {
 	serverMux.HandleFunc("/v0.4/services", r.httpHandleWithVersion(v04, r.handleServices))
 
 	// expvar implicitely publishes "/debug/vars" on the same port
-
 	addr := fmt.Sprintf("%s:%d", r.conf.ReceiverHost, r.conf.ReceiverPort)
 	if err := r.Listen(addr, "", serverMux); err != nil {
-		die("%v", err)
+		osutil.Exitf("%v", err)
 	}
 
-	go func() {
-		r.preSampler.Run()
-	}()
+	go r.preSampler.Run()
 
 	go func() {
 		defer watchdog.LogOnPanic()
@@ -155,6 +153,7 @@ func (r *HTTPReceiver) Listen(addr, logExtra string, serverMux *http.ServeMux) e
 	return nil
 }
 
+// Stop stops the receiver and shuts down the HTTP server.
 func (r *HTTPReceiver) Stop() error {
 	expiry := time.Now().Add(20 * time.Second) // give it 20 seconds
 	ctx, _ := context.WithDeadline(context.Background(), expiry)

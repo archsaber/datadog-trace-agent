@@ -11,6 +11,7 @@ import (
 	"github.com/DataDog/datadog-trace-agent/filters"
 	"github.com/DataDog/datadog-trace-agent/info"
 	"github.com/DataDog/datadog-trace-agent/model"
+	"github.com/DataDog/datadog-trace-agent/osutil"
 	"github.com/DataDog/datadog-trace-agent/quantizer"
 	"github.com/DataDog/datadog-trace-agent/sampler"
 	"github.com/DataDog/datadog-trace-agent/statsd"
@@ -46,14 +47,14 @@ type Agent struct {
 	ScoreSampler       *Sampler
 	ErrorsScoreSampler *Sampler
 	PrioritySampler    *Sampler
-	TransactionSampler *TransactionSampler
+	TransactionSampler TransactionSampler
 	TraceWriter        *writer.TraceWriter
 	ServiceWriter      *writer.ServiceWriter
 	StatsWriter        *writer.StatsWriter
 	ServiceExtractor   *TraceServiceExtractor
 	ServiceMapper      *ServiceMapper
 
-	sampledTraceChan chan *model.Trace
+	sampledTraceChan chan *writer.SampledTrace
 
 	// config
 	conf    *config.AgentConfig
@@ -61,8 +62,6 @@ type Agent struct {
 
 	// Used to synchronize on a clean exit
 	ctx context.Context
-
-	die func(format string, args ...interface{})
 }
 
 // NewAgent returns a new Agent object, ready to be started. It takes a context
@@ -72,8 +71,7 @@ func NewAgent(ctx context.Context, conf *config.AgentConfig) *Agent {
 
 	// inter-component channels
 	rawTraceChan := make(chan model.Trace, 5000) // about 1000 traces/sec for 5 sec, TODO: move to *model.Trace
-	sampledTraceChan := make(chan *model.Trace)
-	analyzedTransactionChan := make(chan *model.Span)
+	sampledTraceChan := make(chan *writer.SampledTrace)
 	statsChan := make(chan []model.StatsBucket)
 	serviceChan := make(chan model.ServicesMetadata, 50)
 	filteredServiceChan := make(chan model.ServicesMetadata, 50)
@@ -90,10 +88,10 @@ func NewAgent(ctx context.Context, conf *config.AgentConfig) *Agent {
 	ss := NewScoreSampler(conf)
 	ess := NewErrorsSampler(conf)
 	ps := NewPrioritySampler(conf, dynConf)
-	ts := NewTransactionSampler(conf, analyzedTransactionChan)
+	ts := NewTransactionSampler(conf)
 	se := NewTraceServiceExtractor(serviceChan)
 	sm := NewServiceMapper(serviceChan, filteredServiceChan)
-	tw := writer.NewTraceWriter(conf, sampledTraceChan, analyzedTransactionChan)
+	tw := writer.NewTraceWriter(conf, sampledTraceChan)
 	sw := writer.NewStatsWriter(conf, statsChan)
 	svcW := writer.NewServiceWriter(conf, filteredServiceChan)
 
@@ -114,7 +112,6 @@ func NewAgent(ctx context.Context, conf *config.AgentConfig) *Agent {
 		conf:               conf,
 		dynConf:            dynConf,
 		ctx:                ctx,
-		die:                die,
 	}
 }
 
@@ -281,25 +278,35 @@ func (a *Agent) Process(t model.Trace) {
 		// sampled either by the trace or transaction pipeline so we return here
 		return
 	}
+
+	// Run both full trace sampling and transaction extraction in another goroutine
 	go func() {
 		defer watchdog.LogOnPanic()
-		sampled := false
 
+		// Trace sampling
+		sampled := false
 		for _, s := range samplers {
 			// Consider trace as sampled if at least one of the samplers kept it
 			sampled = s.Add(pt) || sampled
 		}
 
+		var sampledTrace writer.SampledTrace
+
 		if sampled {
-			a.sampledTraceChan <- &pt.Trace
+			sampledTrace.Trace = &pt.Trace
+		}
+
+		sampledTrace.Transactions = a.TransactionSampler.Extract(pt)
+
+		if !sampledTrace.Empty() {
+			a.sampledTraceChan <- &sampledTrace
 		}
 	}()
-	if a.TransactionSampler.Enabled() {
-		go func() {
-			defer watchdog.LogOnPanic()
-			a.TransactionSampler.Add(pt)
-		}()
-	}
+}
+
+// dieFunc is used by watchdog to kill the agent; replaced in tests.
+var dieFunc = func(fmt string, args ...interface{}) {
+	osutil.Exitf(fmt, args...)
 }
 
 func (a *Agent) watchdog() {
@@ -309,10 +316,10 @@ func (a *Agent) watchdog() {
 	wi.Net = watchdog.Net()
 
 	if float64(wi.Mem.Alloc) > a.conf.MaxMemory && a.conf.MaxMemory > 0 {
-		a.die("exceeded max memory (current=%d, max=%d)", wi.Mem.Alloc, int64(a.conf.MaxMemory))
+		dieFunc("exceeded max memory (current=%d, max=%d)", wi.Mem.Alloc, int64(a.conf.MaxMemory))
 	}
 	if int(wi.Net.Connections) > a.conf.MaxConnections && a.conf.MaxConnections > 0 {
-		a.die("exceeded max connections (current=%d, max=%d)", wi.Net.Connections, a.conf.MaxConnections)
+		dieFunc("exceeded max connections (current=%d, max=%d)", wi.Net.Connections, a.conf.MaxConnections)
 	}
 
 	info.UpdateWatchdogInfo(wi)

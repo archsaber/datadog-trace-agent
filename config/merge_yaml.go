@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/url"
-	"os"
 	"regexp"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 
 	"github.com/DataDog/datadog-trace-agent/backoff"
 	"github.com/DataDog/datadog-trace-agent/model"
+	"github.com/DataDog/datadog-trace-agent/osutil"
 	writerconfig "github.com/DataDog/datadog-trace-agent/writer/config"
 	log "github.com/cihub/seelog"
 )
@@ -47,6 +47,7 @@ type traceAgent struct {
 	LogFilePath        string         `yaml:"log_file"`
 	ReplaceTags        []*ReplaceRule `yaml:"replace_tags"`
 	ReceiverPort       int            `yaml:"receiver_port"`
+	ConnectionLimit    int            `yaml:"connection_limit"`
 	APMNonLocalTraffic *bool          `yaml:"apm_non_local_traffic"`
 
 	WatchdogMaxMemory float64 `yaml:"max_memory"`
@@ -57,7 +58,8 @@ type traceAgent struct {
 	ServiceWriter serviceWriter `yaml:"service_writer"`
 	StatsWriter   statsWriter   `yaml:"stats_writer"`
 
-	AnalyzedRateByService map[string]float64 `yaml:"analyzed_rate_by_service"`
+	AnalyzedRateByServiceLegacy map[string]float64 `yaml:"analyzed_rate_by_service"`
+	AnalyzedSpans               map[string]float64 `yaml:"analyzed_spans"`
 
 	DDAgentBin string `yaml:"dd_agent_bin"`
 }
@@ -83,6 +85,7 @@ type serviceWriter struct {
 }
 
 type statsWriter struct {
+	MaxEntriesPerPayload   int                    `yaml:"max_entries_per_payload"`
 	UpdateInfoPeriod       int                    `yaml:"update_info_period_seconds"`
 	QueueablePayloadSender queueablePayloadSender `yaml:"queue"`
 }
@@ -107,11 +110,7 @@ func newYamlFromBytes(bytes []byte) (*YamlAgentConfig, error) {
 }
 
 // NewYamlIfExists returns a new YamlAgentConfig if the given configPath is exists.
-func NewYamlIfExists(configPath string) (*YamlAgentConfig, error) {
-	if _, err := os.Stat(configPath); err != nil {
-		// file does not exist
-		return nil, nil
-	}
+func NewYaml(configPath string) (*YamlAgentConfig, error) {
 	fileContent, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		return nil, err
@@ -119,29 +118,29 @@ func NewYamlIfExists(configPath string) (*YamlAgentConfig, error) {
 	return newYamlFromBytes(fileContent)
 }
 
-func mergeYamlConfig(agentConf *AgentConfig, yc *YamlAgentConfig) error {
+func (c *AgentConfig) loadYamlConfig(yc *YamlAgentConfig) {
 	if yc == nil {
-		return nil
+		return
 	}
 
 	if yc.APIKey != "" {
-		agentConf.APIKey = yc.APIKey
+		c.APIKey = yc.APIKey
 	}
 	if yc.HostName != "" {
-		agentConf.HostName = yc.HostName
+		c.Hostname = yc.HostName
 	}
 	if yc.LogLevel != "" {
-		agentConf.LogLevel = yc.LogLevel
+		c.LogLevel = yc.LogLevel
 	}
 	if yc.StatsdPort > 0 {
-		agentConf.StatsdPort = yc.StatsdPort
+		c.StatsdPort = yc.StatsdPort
 	}
 
 	// respect Agent proxy configuration knowing we only have to support the APIEndpoint HTTPS case
 	if yc.Proxy.HTTPS != "" {
 		traceAgentNoProxy := false
 		for _, host := range yc.Proxy.NoProxy {
-			if host == agentConf.APIEndpoint {
+			if host == c.APIEndpoint {
 				log.Info("Trace Agent endpoint matches proxy.no_proxy list item '%s': not using any proxy", host)
 				traceAgentNoProxy = true
 				break
@@ -151,7 +150,7 @@ func mergeYamlConfig(agentConf *AgentConfig, yc *YamlAgentConfig) error {
 		if !traceAgentNoProxy {
 			url, err := url.Parse(yc.Proxy.HTTPS)
 			if err == nil {
-				agentConf.ProxyURL = url
+				c.ProxyURL = url
 			} else {
 				log.Errorf("Failed to parse proxy URL from proxy.https configuration: %s", err)
 			}
@@ -159,78 +158,96 @@ func mergeYamlConfig(agentConf *AgentConfig, yc *YamlAgentConfig) error {
 	}
 
 	if yc.SkipSSLValidation != nil {
-		agentConf.SkipSSLValidation = *yc.SkipSSLValidation
+		c.SkipSSLValidation = *yc.SkipSSLValidation
 	}
 
 	if yc.TraceAgent.Enabled != nil {
-		agentConf.Enabled = *yc.TraceAgent.Enabled
+		c.Enabled = *yc.TraceAgent.Enabled
 	}
 
 	if yc.TraceAgent.Endpoint != "" {
-		agentConf.APIEndpoint = yc.TraceAgent.Endpoint
+		c.APIEndpoint = yc.TraceAgent.Endpoint
 	}
 
 	if yc.TraceAgent.LogFilePath != "" {
-		agentConf.LogFilePath = yc.TraceAgent.LogFilePath
+		c.LogFilePath = yc.TraceAgent.LogFilePath
 	}
 
 	if yc.TraceAgent.Env != "" {
-		agentConf.DefaultEnv = model.NormalizeTag(yc.TraceAgent.Env)
+		c.DefaultEnv = model.NormalizeTag(yc.TraceAgent.Env)
 	}
 
 	if yc.TraceAgent.ReceiverPort > 0 {
-		agentConf.ReceiverPort = yc.TraceAgent.ReceiverPort
+		c.ReceiverPort = yc.TraceAgent.ReceiverPort
+	}
+
+	if yc.TraceAgent.ConnectionLimit > 0 {
+		c.ConnectionLimit = yc.TraceAgent.ConnectionLimit
 	}
 
 	if yc.TraceAgent.ExtraSampleRate > 0 {
-		agentConf.ExtraSampleRate = yc.TraceAgent.ExtraSampleRate
+		c.ExtraSampleRate = yc.TraceAgent.ExtraSampleRate
 	}
 	if yc.TraceAgent.MaxTracesPerSecond > 0 {
-		agentConf.MaxTPS = yc.TraceAgent.MaxTracesPerSecond
+		c.MaxTPS = yc.TraceAgent.MaxTracesPerSecond
 	}
 
 	if len(yc.TraceAgent.IgnoreResources) > 0 {
-		agentConf.Ignore["resource"] = yc.TraceAgent.IgnoreResources
+		c.Ignore["resource"] = yc.TraceAgent.IgnoreResources
 	}
 
 	if rt := yc.TraceAgent.ReplaceTags; rt != nil {
 		err := compileReplaceRules(rt)
 		if err != nil {
-			return fmt.Errorf("replace_tags: %s", err)
+			osutil.Exitf("replace_tags: %s", err)
 		}
-		agentConf.ReplaceTags = rt
+		c.ReplaceTags = rt
 	}
 
 	if yc.TraceAgent.APMNonLocalTraffic != nil && *yc.TraceAgent.APMNonLocalTraffic {
-		agentConf.ReceiverHost = "0.0.0.0"
+		c.ReceiverHost = "0.0.0.0"
 	}
 
 	// undocumented
 	if yc.TraceAgent.WatchdogMaxCPUPct > 0 {
-		agentConf.MaxCPU = yc.TraceAgent.WatchdogMaxCPUPct / 100
+		c.MaxCPU = yc.TraceAgent.WatchdogMaxCPUPct / 100
 	}
 	if yc.TraceAgent.WatchdogMaxMemory > 0 {
-		agentConf.MaxMemory = yc.TraceAgent.WatchdogMaxMemory
+		c.MaxMemory = yc.TraceAgent.WatchdogMaxMemory
 	}
 	if yc.TraceAgent.WatchdogMaxConns > 0 {
-		agentConf.MaxConnections = yc.TraceAgent.WatchdogMaxConns
+		c.MaxConnections = yc.TraceAgent.WatchdogMaxConns
 	}
 
 	// undocumented
-	agentConf.ServiceWriterConfig = readServiceWriterConfigYaml(yc.TraceAgent.ServiceWriter)
-	agentConf.StatsWriterConfig = readStatsWriterConfigYaml(yc.TraceAgent.StatsWriter)
-	agentConf.TraceWriterConfig = readTraceWriterConfigYaml(yc.TraceAgent.TraceWriter)
+	c.ServiceWriterConfig = readServiceWriterConfigYaml(yc.TraceAgent.ServiceWriter)
+	c.StatsWriterConfig = readStatsWriterConfigYaml(yc.TraceAgent.StatsWriter)
+	c.TraceWriterConfig = readTraceWriterConfigYaml(yc.TraceAgent.TraceWriter)
+
+	// undocumented deprecated
+	c.AnalyzedRateByServiceLegacy = yc.TraceAgent.AnalyzedRateByServiceLegacy
+	if len(yc.TraceAgent.AnalyzedRateByServiceLegacy) > 0 {
+		log.Warn("analyzed_rate_by_service is deprecated, please use analyzed_spans instead")
+	}
+	// undocumeted
+	for key, rate := range yc.TraceAgent.AnalyzedSpans {
+		serviceName, operationName, err := parseServiceAndOp(key)
+		if err != nil {
+			log.Errorf("Error when parsing names", err)
+			continue
+		}
+
+		if _, ok := c.AnalyzedSpansByService[serviceName]; !ok {
+			c.AnalyzedSpansByService[serviceName] = make(map[string]float64)
+		}
+		c.AnalyzedSpansByService[serviceName][operationName] = rate
+	}
 
 	// undocumented
-	agentConf.AnalyzedRateByService = yc.TraceAgent.AnalyzedRateByService
-
-	// undocumented
-	agentConf.DDAgentBin = defaultDDAgentBin
+	c.DDAgentBin = defaultDDAgentBin
 	if yc.TraceAgent.DDAgentBin != "" {
-		agentConf.DDAgentBin = yc.TraceAgent.DDAgentBin
+		c.DDAgentBin = yc.TraceAgent.DDAgentBin
 	}
-
-	return nil
 }
 
 func readServiceWriterConfigYaml(yc serviceWriter) writerconfig.ServiceWriterConfig {
@@ -250,6 +267,10 @@ func readServiceWriterConfigYaml(yc serviceWriter) writerconfig.ServiceWriterCon
 
 func readStatsWriterConfigYaml(yc statsWriter) writerconfig.StatsWriterConfig {
 	c := writerconfig.DefaultStatsWriterConfig()
+
+	if yc.MaxEntriesPerPayload > 0 {
+		c.MaxEntriesPerPayload = yc.MaxEntriesPerPayload
+	}
 
 	if yc.UpdateInfoPeriod > 0 {
 		c.UpdateInfoPeriod = getDuration(yc.UpdateInfoPeriod)

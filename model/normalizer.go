@@ -1,10 +1,13 @@
 package model
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	log "github.com/cihub/seelog"
 )
@@ -56,17 +59,9 @@ func (s *Span) Normalize() error {
 	s.Name = name
 
 	// Resource
+	s.Resource = toUTF8(s.Resource)
 	if s.Resource == "" {
 		return errors.New("span.normalize: empty `Resource`")
-	}
-
-	// TraceID & SpanID should be set in the client
-	// because they uniquely define the traces and associate them into traces
-	if s.TraceID == 0 {
-		return errors.New("span.normalize: empty `TraceID`")
-	}
-	if s.SpanID == 0 {
-		return errors.New("span.normalize: empty `SpanID`")
 	}
 
 	// ParentID, TraceID and SpanID set in the client could be the same
@@ -98,8 +93,20 @@ func (s *Span) Normalize() error {
 	// ParentID set on the client side, no way of checking
 
 	// Type
+	s.Type = toUTF8(s.Type)
 	if len(s.Type) > MaxTypeLen {
 		return fmt.Errorf("span.normalize: `Type` too long (max %d chars): %s", MaxTypeLen, s.Type)
+	}
+
+	for k, v := range s.Meta {
+		utf8K := toUTF8(k)
+
+		if k != utf8K {
+			delete(s.Meta, k)
+			k = utf8K
+		}
+
+		s.Meta[k] = toUTF8(v)
 	}
 
 	// Environment
@@ -134,21 +141,22 @@ func NormalizeTrace(t Trace) (Trace, error) {
 	spanIDs := make(map[uint64]struct{})
 
 	traceID := t[0].TraceID
-	for i, span := range t {
+	for _, span := range t {
+		if span.TraceID == 0 {
+			return t, errors.New("span.TraceID cannot be empty")
+		}
+		if span.SpanID == 0 {
+			return t, errors.New("span.SpanID cannot be empty")
+		}
 		if _, ok := spanIDs[span.SpanID]; ok {
-			return t, fmt.Errorf("duplicate span id %v (span %v)",
-				span.SpanID, span)
+			return t, fmt.Errorf("duplicate SpanID %v (span %v)", span.SpanID, span)
 		}
-
 		if span.TraceID != traceID {
-			return t, fmt.Errorf("trace id mismatch %s:%x != %s:%x",
-				t[0].Name, t[0].TraceID, span.Name, span.TraceID)
+			return t, fmt.Errorf("foreign span in trace (Name:TraceID) %s:%x != %s:%x", t[0].Name, t[0].TraceID, span.Name, span.TraceID)
 		}
-
-		if err := t[i].Normalize(); err != nil {
-			return t, fmt.Errorf("invalid span %v: %v", span, err)
+		if err := span.Normalize(); err != nil {
+			return t, fmt.Errorf("invalid span (SpanID:%d): %v", span.SpanID, err)
 		}
-
 		spanIDs[span.SpanID] = struct{}{}
 	}
 
@@ -225,4 +233,29 @@ func NormMetricNameParse(name string) (string, bool) {
 	}
 
 	return string(res), true
+}
+
+// toUTF8 forces the string to utf-8 by replacing illegal character sequences with the utf-8 replacement character.
+func toUTF8(s string) string {
+	if utf8.ValidString(s) {
+		// if string is already valid utf8, return it as-is. Checking validity is cheaper than blindly rewriting.
+		return s
+	}
+
+	in := strings.NewReader(s)
+	var out bytes.Buffer
+	out.Grow(len(s))
+
+	for {
+		r, _, err := in.ReadRune()
+		if err != nil {
+			// note: by contract, if `in` contains non-valid utf-8, no error is returned. Rather the utf-8 replacement
+			// character is returned. Therefore, the only error should usually be io.EOF indicating end of string.
+			// If any other error is returned by chance, we quit as well, outputting whatever part of the string we
+			// had already constructed.
+			return out.String()
+		}
+
+		out.WriteRune(r)
+	}
 }

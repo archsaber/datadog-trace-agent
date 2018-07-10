@@ -14,9 +14,9 @@ import (
 	"github.com/go-ini/ini"
 )
 
-func mergeIniConfig(c *AgentConfig, conf *File) error {
+func (c *AgentConfig) loadIniConfig(conf *File) {
 	if conf == nil {
-		return nil
+		return
 	}
 
 	// [Main] section
@@ -31,7 +31,7 @@ func mergeIniConfig(c *AgentConfig, conf *File) error {
 		}
 
 		if v := m.Key("hostname").MustString(""); v != "" {
-			c.HostName = v
+			c.Hostname = v
 		} else {
 			log.Error("Failed to parse hostname from dd-agent config")
 		}
@@ -122,6 +122,7 @@ func mergeIniConfig(c *AgentConfig, conf *File) error {
 	// [trace.analyzed_rate_by_service] section
 	// undocumented
 	if v, e := conf.GetSection("trace.analyzed_rate_by_service"); e == nil {
+		log.Warn("analyzed_rate_by_service is deprecated, please use analyzed_spans instead")
 		rates := v.KeysHash()
 		for service, rate := range rates {
 			rate, err := strconv.ParseFloat(rate, 64)
@@ -130,7 +131,30 @@ func mergeIniConfig(c *AgentConfig, conf *File) error {
 				continue
 			}
 
-			c.AnalyzedRateByService[service] = rate
+			c.AnalyzedRateByServiceLegacy[service] = rate
+		}
+	}
+
+	// [trace.analyzed_spans] section
+	// undocumented
+	if v, e := conf.GetSection("trace.analyzed_spans"); e == nil {
+		rates := v.KeysHash()
+		for key, rate := range rates {
+			serviceName, operationName, err := parseServiceAndOp(key)
+			if err != nil {
+				log.Errorf("Error when parsing names", err)
+				continue
+			}
+			rate, err := strconv.ParseFloat(rate, 64)
+			if err != nil {
+				log.Errorf("failed to parse rate for analyzed service: %v", key)
+				continue
+			}
+
+			if _, ok := c.AnalyzedSpansByService[serviceName]; !ok {
+				c.AnalyzedSpansByService[serviceName] = make(map[string]float64)
+			}
+			c.AnalyzedSpansByService[serviceName][operationName] = rate
 		}
 	}
 
@@ -196,8 +220,6 @@ func mergeIniConfig(c *AgentConfig, conf *File) error {
 	c.ServiceWriterConfig = readServiceWriterConfig(conf, "trace.writer.services")
 	c.StatsWriterConfig = readStatsWriterConfig(conf, "trace.writer.stats")
 	c.TraceWriterConfig = readTraceWriterConfig(conf, "trace.writer.traces")
-
-	return nil
 }
 
 func readServiceWriterConfig(confFile *File, section string) writerconfig.ServiceWriterConfig {
@@ -218,6 +240,10 @@ func readServiceWriterConfig(confFile *File, section string) writerconfig.Servic
 
 func readStatsWriterConfig(confFile *File, section string) writerconfig.StatsWriterConfig {
 	c := writerconfig.DefaultStatsWriterConfig()
+
+	if v, e := confFile.GetInt(section, "max_entries_per_payload"); e == nil {
+		c.MaxEntriesPerPayload = v
+	}
 
 	if v, e := confFile.GetInt(section, "update_info_period_seconds"); e == nil {
 		c.UpdateInfoPeriod = time.Duration(v) * time.Second
@@ -338,4 +364,12 @@ func readProxyURL(m *ini.Section) (*url.URL, error) {
 	}
 
 	return url.Parse(path)
+}
+
+func parseServiceAndOp(name string) (string, string, error) {
+	splits := strings.Split(name, "|")
+	if len(splits) != 2 {
+		return "", "", fmt.Errorf("Bad format for operation name and service name in: %s, it should have format: service_name|operation_name", name)
+	}
+	return splits[0], splits[1], nil
 }
