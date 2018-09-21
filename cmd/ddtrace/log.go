@@ -3,6 +3,7 @@ package ddtrace
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	log "github.com/cihub/seelog"
@@ -222,4 +223,17 @@ func SetupDefaultLogger() error {
 		return err
 	}
 	return log.ReplaceLogger(logger)
+}
+
+// SetupLoggerFromAgentConfig sets up a logger as per agent's config
+func SetupLoggerFromAgentConfig(cfg *config.AgentConfig) error {
+	logLevel, ok := log.LogLevelFromString(strings.ToLower(cfg.LogLevel))
+	if !ok {
+		logLevel = log.InfoLvl
+	}
+	duration := 10 * time.Second
+	if !cfg.LogThrottlingEnabled {
+		duration = 0
+	}
+	return SetupLogger(logLevel, cfg.LogFilePath, duration, 10)
 }

@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
-	"strings"
 	"syscall"
 	"time"
 
@@ -129,15 +128,7 @@ func runAgent(ctx context.Context) {
 	// Initialize logging (replacing the default logger). No need
 	// to defer log.Flush, it was already done when calling
 	// "SetupDefaultLogger" earlier.
-	logLevel, ok := log.LogLevelFromString(strings.ToLower(cfg.LogLevel))
-	if !ok {
-		logLevel = log.InfoLvl
-	}
-	duration := 10 * time.Second
-	if !cfg.LogThrottlingEnabled {
-		duration = 0
-	}
-	err = SetupLogger(logLevel, cfg.LogFilePath, duration, 10)
+	err = SetupLoggerFromAgentConfig(cfg)
 	if err != nil {
 		osutil.Exitf("cannot create logger: %v", err)
 	}
