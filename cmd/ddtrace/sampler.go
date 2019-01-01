@@ -22,12 +22,15 @@ type Sampler struct {
 
 	// actual implementation of the sampling logic
 	engine sampler.Engine
+
+	exit chan struct{}
 }
 
 // NewScoreSampler creates a new empty sampler ready to be started
 func NewScoreSampler(conf *config.AgentConfig) *Sampler {
 	return &Sampler{
 		engine: sampler.NewScoreEngine(conf.ExtraSampleRate, conf.MaxTPS),
+		exit:   make(chan struct{}),
 	}
 }
 
@@ -37,6 +40,7 @@ func NewScoreSampler(conf *config.AgentConfig) *Sampler {
 func NewErrorsSampler(conf *config.AgentConfig) *Sampler {
 	return &Sampler{
 		engine: sampler.NewErrorsEngine(conf.ExtraSampleRate, conf.MaxTPS),
+		exit:   make(chan struct{}),
 	}
 }
 
@@ -44,6 +48,7 @@ func NewErrorsSampler(conf *config.AgentConfig) *Sampler {
 func NewPrioritySampler(conf *config.AgentConfig, dynConf *config.DynamicConfig) *Sampler {
 	return &Sampler{
 		engine: sampler.NewPriorityEngine(conf.ExtraSampleRate, conf.MaxTPS, &dynConf.RateByService),
+		exit:   make(chan struct{}),
 	}
 }
 
@@ -74,6 +79,7 @@ func (s *Sampler) Add(t processedTrace) bool {
 
 // Stop stops the sampler
 func (s *Sampler) Stop() {
+	close(s.exit)
 	s.engine.Stop()
 }
 
@@ -81,6 +87,12 @@ func (s *Sampler) Stop() {
 func (s *Sampler) logStats() {
 
 	for now := range time.Tick(10 * time.Second) {
+		select {
+		case <-s.exit:
+			return
+		default:
+		}
+
 		keptTraceCount := s.keptTraceCount
 		totalTraceCount := s.totalTraceCount
 		s.keptTraceCount = 0
