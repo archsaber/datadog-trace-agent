@@ -29,8 +29,13 @@ func NewRateLimitedListener(l net.Listener, conns int) (*RateLimitedListener, er
 }
 
 // Refresh periodically refreshes the connection lease, and thus cancels any rate limits in place
-func (sl *RateLimitedListener) Refresh(conns int) {
+func (sl *RateLimitedListener) Refresh(conns int, exit chan struct{}) {
 	for range time.Tick(30 * time.Second) {
+		select {
+		case <-exit:
+			return
+		default:
+		}
 		atomic.StoreInt32(&sl.connLease, int32(conns))
 		log.Debugf("Refreshed the connection lease: %d conns available", conns)
 	}

@@ -67,6 +67,8 @@ type HTTPReceiver struct {
 
 	maxRequestBodyLength int64
 	debug                bool
+
+	exit chan struct{}
 }
 
 // NewHTTPReceiver returns a pointer to a new HTTPReceiver
@@ -85,6 +87,8 @@ func NewHTTPReceiver(
 
 		maxRequestBodyLength: maxRequestBodyLength,
 		debug:                strings.ToLower(conf.LogLevel) == "debug",
+
+		exit: make(chan struct{}),
 	}
 }
 
@@ -143,7 +147,7 @@ func (r *HTTPReceiver) Listen(addr, logExtra string, serverMux *http.ServeMux) e
 
 	go func() {
 		defer watchdog.LogOnPanic()
-		ln.Refresh(r.conf.ConnectionLimit)
+		ln.Refresh(r.conf.ConnectionLimit, r.exit)
 	}()
 	go func() {
 		defer watchdog.LogOnPanic()
@@ -155,6 +159,9 @@ func (r *HTTPReceiver) Listen(addr, logExtra string, serverMux *http.ServeMux) e
 
 // Stop stops the receiver and shuts down the HTTP server.
 func (r *HTTPReceiver) Stop() error {
+	close(r.exit)
+	r.preSampler.Stop()
+
 	expiry := time.Now().Add(20 * time.Second) // give it 20 seconds
 	ctx, _ := context.WithDeadline(context.Background(), expiry)
 	return r.server.Shutdown(ctx)
@@ -307,6 +314,12 @@ func (r *HTTPReceiver) logStats() {
 	accStats := info.NewReceiverStats()
 
 	for now := range time.Tick(10 * time.Second) {
+		select {
+		case <-r.exit:
+			return
+		default:
+		}
+
 		statsd.Client.Gauge("datadog.trace_agent.heartbeat", 1, []string{"version:" + info.Version}, 1)
 
 		// We update accStats with the new stats we collected
