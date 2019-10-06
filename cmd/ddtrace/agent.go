@@ -209,13 +209,13 @@ func (a *Agent) Process(t model.Trace) {
 	}
 	atomic.AddInt64(priorityPtr, 1)
 
-	if root.End() < model.Now()-2*a.conf.BucketInterval.Nanoseconds() {
+	/*if root.End() < model.Now()-2*a.conf.BucketInterval.Nanoseconds() {
 		log.Errorf("skipping trace with root too far in past, root:%v", *root)
 
 		atomic.AddInt64(&ts.TracesDropped, 1)
 		atomic.AddInt64(&ts.SpansDropped, int64(len(t)))
 		return
-	}
+	}*/
 
 	for _, f := range a.Filters {
 		if f.Keep(root, &t) {
