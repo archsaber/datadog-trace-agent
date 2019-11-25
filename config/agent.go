@@ -127,12 +127,12 @@ func New() *AgentConfig {
 		LogFilePath:          DefaultLogFilePath,
 		LogThrottlingEnabled: true,
 
-		MaxMemory:        5e8, // 500 Mb, should rarely go above 50 Mb
+		MaxMemory:        1e9, // 1 gb, should rarely go above 50 Mb
 		MaxCPU:           0.5, // 50%, well behaving agents keep below 5%
 		MaxConnections:   200, // in practice, rarely goes over 20
 		WatchdogInterval: time.Minute,
 
-		Ignore: make(map[string][]string),
+		Ignore:                      make(map[string][]string),
 		AnalyzedRateByServiceLegacy: make(map[string]float64),
 		AnalyzedSpansByService:      make(map[string]map[string]float64),
 	}
